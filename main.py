@@ -17,6 +17,9 @@ from mqtt_as import MQTTClient
 from mqtt_local import config
 import uasyncio as asyncio
 import dht, machine
+from machine import Pin
+from time import sleep
+
 
 d = dht.DHT11(machine.Pin(15))
 
@@ -31,6 +34,7 @@ async def wifi_han(state):
 async def conn_han(client):
     await client.subscribe('e6614c311b551131/temperatura', 1)
     await client.subscribe('e6614c311b551131/humedad', 1)
+    await client.subscribe('e6614c311b551131/destello', 0) 
 
 async def main(client):
     await client.connect()
@@ -49,6 +53,22 @@ async def main(client):
                 await client.publish('e6614c311b551131/humedad', '{}'.format(humedad), qos = 1)
             except OSError as e:
                 print("sin sensor humedad")
+            try:
+                led_board = Pin("LED", Pin.OUT)
+                sleep(1)    #le damos tiempo a vREPL
+                print("\nLED esta destellando...")
+                n=0
+                while (n < 5):
+                        led_board.toggle()
+                        # led_board.value(not led_board.value())
+                        sleep(.5) # sleep 1sec
+                        n=n+1
+                led_board.off()
+                print("Listo")
+                await client.publish('e6614c311b551131/destello', '{}'.format(n), qos = 1)
+                    
+            except OSError as e:
+                print("No se pudo destellar el LED")
         except OSError as e:
             print("sin sensor")
         await asyncio.sleep(20)  # Broker is slow
