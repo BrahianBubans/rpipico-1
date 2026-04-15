@@ -151,6 +151,9 @@ async def main():
 
 try:
     asyncio.run(main())
+
+except KeyboardInterrupt:
+    r.value(1)
 finally:
     asyncio.new_event_loop()
 
