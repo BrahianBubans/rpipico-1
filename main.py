@@ -39,7 +39,8 @@ def guardar_config(ajustes_datos):
 
 
 async def wifi_han(state):
-    print('Wifi in ', 'up' if state else 'down')
+    print('Wifi is ', 'up' if state else 'down')
+    await asyncio.sleep(1) 
 
 async def conn_han(client):
     await client.subscribe(f"{ID_del_dispositivo}/setpoint", 1)
