@@ -1,89 +1,156 @@
-# (C) Copyright Peter Hinch 2017-2019.
-# Released under the MIT licence.
-
-# This demo publishes to topic "result" and also subscribes to that topic.
-# This demonstrates bidirectional TLS communication.
-# You can also run the following on a PC to verify:
-# mosquitto_sub -h test.mosquitto.org -t result
-# To get mosquitto_sub to use a secure connection use this, offered by @gmrza:
-# mosquitto_sub -h <my local mosquitto server> -t result -u <username> -P <password> -p 8883
-
-# Public brokers https://github.com/mqtt/mqtt.github.io/wiki/public_brokers
-
-# red LED: ON == WiFi fail
-# green LED heartbeat: demonstrates scheduler is running.
-
 from mqtt_as import MQTTClient
 from mqtt_local import config
 import uasyncio as asyncio
 import dht, machine
 from machine import Pin
-from time import sleep
+#from time import sleep
+import ujson as json
+import binascii
 
-
+#d es el sensor DHT11
 d = dht.DHT11(machine.Pin(15))
 
-def sub_cb(topic, msg, retained):
-    print('Topic = {} -> Valor = {}'.format(topic.decode(), msg.decode()))
+#r es el rele
+r=machine.Pin(16, machine.Pin.OUT)
+r.value(1)
+
+#led es el led del la rasperry
+led=machine.Pin("LED", machine.Pin.OUT)
+
+ID_del_dispositivo = binascii.hexlify(machine.unique_id()).decode()
+archivo_config="configuracion.json"
+
+
+def cargar_config():
+    try:
+        with open(archivo_config, "r") as f:
+            return json.load(f)
+    except OSError:
+        return {
+            "setpoint": 24.0,
+            "periodo": 5,
+            "modo": "auto",
+            "rele": 0
+        }
+
+def guardar_config(ajustes_datos):
+    with open(archivo_config, "w") as archivo:
+        json.dump(ajustes_datos, archivo)
+
 
 async def wifi_han(state):
-    print('Wifi is ', 'up' if state else 'down')
-    await asyncio.sleep(1)
+    print('Wifi in ', 'up' if state else 'down')
 
-# If you connect with clean_session True, must re-subscribe (MQTT spec 3.1.2.4)
 async def conn_han(client):
-    await client.subscribe('e6614c311b551131/temperatura', 1)
-    await client.subscribe('e6614c311b551131/humedad', 1)
-    await client.subscribe('e6614c311b551131/destello', 0) 
+    await client.subscribe(f"{ID_del_dispositivo}/setpoint", 1)
+    await client.subscribe(f"{ID_del_dispositivo}/periodo", 1)
+    await client.subscribe(f"{ID_del_dispositivo}/destello", 1)
+    await client.subscribe(f"{ID_del_dispositivo}/modo", 1)
+    await client.subscribe(f"{ID_del_dispositivo}/rele", 1)
 
-async def main(client):
-    await client.connect()
-    n = 0
-    await asyncio.sleep(2)  # Give broker time
+
+evento_destello = asyncio.Event()
+
+ajustes = cargar_config()
+
+async def procesar_mensajes(client):
+    async for topic, msg, retained in client.queue:
+        
+            t = topic.decode()
+            m = msg.decode()
+            print(f"Mensaje: {t} -> {m}")
+
+            ban=False
+            if "setpoint" in t:
+                ajustes["setpoint"] = float(m)
+                ban=True
+            if "periodo" in t:
+                ajustes["periodo"] = int(m)
+                ban=True
+            if "modo" in t:
+                m=m.lower()
+                if m in ["auto", "manual"]:
+                    ajustes["modo"] = m
+                    ban=True
+                else:
+                     ban=False
+            if "rele" in t:
+                ajustes["rele"] = int(m)
+                ban=True
+            if "destello" in t:
+                evento_destello.set() 
+                ban=True
+
+            if ban == True:
+                guardar_config(ajustes)
+
+async def bucle_control(client):
     while True:
         try:
             d.measure()
-            try:
-                temperatura=d.temperature()
-                await client.publish('e6614c311b551131/temperatura', '{}'.format(temperatura), qos = 1)
-            except OSError as e:
-                print("sin sensor temperatura")
-            try:
-                humedad=d.humidity()
-                await client.publish('e6614c311b551131/humedad', '{}'.format(humedad), qos = 1)
-            except OSError as e:
-                print("sin sensor humedad")
-            try:
-                led_board = Pin("LED", Pin.OUT)
-                sleep(1)    #le damos tiempo a vREPL
-                print("\nLED esta destellando...")
-                n=0
-                while (n < 5):
-                        led_board.toggle()
-                        # led_board.value(not led_board.value())
-                        sleep(.5) # sleep 1sec
-                        n=n+1
-                led_board.off()
-                print("Listo")
-                await client.publish('e6614c311b551131/destello', '{}'.format(n), qos = 1)
-                    
-            except OSError as e:
-                print("No se pudo destellar el LED")
-        except OSError as e:
-            print("sin sensor")
-        await asyncio.sleep(20)  # Broker is slow
+            t = d.temperature()
+            h= d.humidity()
 
-# Define configuration
-config['subs_cb'] = sub_cb
-config['connect_coro'] = conn_han
+            # Lógica de control
+            if ajustes["modo"] == "auto":
+                if t > ajustes["setpoint"]:
+                    r.value(0)
+                else:
+                    r.value(1)
+            else: # Modo manual
+                r.value(ajustes["rele"])
+
+            # se publica el estado
+            estado_datos= {
+                "temperatura": t,
+                "humedad": h,
+                "setpoint": ajustes["setpoint"],
+                "periodo": ajustes["periodo"],
+                "modo": ajustes["modo"]
+            }
+            await client.publish(ID_del_dispositivo, json.dumps(estado_datos), qos=1)
+            
+        except Exception as e:
+            print(f"Error al leer o publicar los datos: {e}")
+
+        await asyncio.sleep(ajustes["periodo"])
+
+async def tarea_destello():
+    while True:
+        await evento_destello.wait()
+        for _ in range(20):
+            led.toggle()
+            await asyncio.sleep_ms(200)
+        led.value(0)
+        evento_destello.clear()
+
+
+# Configurar parámetros adicionales de mqtt_as
+config['subs_cb'] = lambda *args: None #  para evitar error si no se usa callback
 config['wifi_coro'] = wifi_han
+config['queue_len'] = 10
 config['ssl'] = True
+MQTTClient.DEBUG = True  
 
-# Set up client
-MQTTClient.DEBUG = True  # Optional
-client = MQTTClient(config)
+
+async def main():
+    
+    print("ID del dispositivo:", ID_del_dispositivo)
+    client = MQTTClient(config)
+    await client.connect()
+
+    await conn_han(client)
+    
+    await asyncio.gather(
+            procesar_mensajes(client),
+            bucle_control(client),
+            tarea_destello()
+        )
+
+
 try:
-    asyncio.run(main(client))
+    asyncio.run(main())
 finally:
-    client.close()
     asyncio.new_event_loop()
+
+

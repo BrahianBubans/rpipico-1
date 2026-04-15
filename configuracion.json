@@ -1,0 +1,6 @@
+{
+"setpoint": 30.0,
+"periodo": 5,
+"modo": "auto",
+"rele": 1
+}
