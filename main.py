@@ -1,3 +1,4 @@
+import ssl
 from mqtt_as import MQTTClient
 from mqtt_local import config
 import uasyncio as asyncio
@@ -128,9 +129,16 @@ async def tarea_destello():
 
 
 #configuracion de MQTT y del cliente
+# configuracion de MQTT y del cliente
 config['queue_len'] = 10
 config['ssl'] = True
-MQTTClient.DEBUG = True  
+config['ssl_params'] = {
+    'server_hostname': 'gorraroja.duckdns.org', 
+    'cert_reqs': ssl.CERT_NONE
+}
+config['user'] = 'gorra'
+config['password'] = 'roja'
+MQTTClient.DEBUG = True
 
 
 async def main():

@@ -4,6 +4,7 @@ from mqtt_as import config
 from settings import SSID, password, BROKER
 
 config['server'] = BROKER  # Change to suit
+config['port'] = 18207
 #  config['server'] = 'test.mosquitto.org'
 
 # Not needed if you're only using ESP8266
